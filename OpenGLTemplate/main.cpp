@@ -10,9 +10,16 @@
 
 using namespace std;
 
-void framebufferSizeCallback(GLFWwindow* window, int width, int height);
+const unsigned int getWindowDimension(const bool&);
+const string getWindowTitle();
+void framebufferSizeCallback(GLFWwindow *const, const int, const int);
+void processWindowInput(GLFWwindow *const);
+void setupGlBuffers(unsigned int&, unsigned int&, unsigned int&);
+const unsigned int compileShader(const GLenum, const char*);
+const unsigned int createShaderProgram(const char*, const char*);
+void teardownGlBuffers(const unsigned int&, const unsigned int&, const unsigned int&);
 
-static const unsigned int getWindowDimension(bool is_height) {
+const unsigned int getWindowDimension(const bool& is_height) {
 	int dimension;
 	string input;
 	while (true) {
@@ -27,7 +34,7 @@ static const unsigned int getWindowDimension(bool is_height) {
 
 			break;
 		}
-		catch (const exception& e) {
+		catch (const exception&) {
 			continue;
 		}
 	}
@@ -35,7 +42,7 @@ static const unsigned int getWindowDimension(bool is_height) {
 	return dimension;
 }
 
-static const string getWindowTitle() {
+const string getWindowTitle() {
 	string title;
 
 	cout << "Input the desired window title: ";
@@ -44,13 +51,110 @@ static const string getWindowTitle() {
 	return title;
 }
 
-void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
+void framebufferSizeCallback(GLFWwindow *const window, const int width, const int height) {
 	glViewport(0, 0, width, height);
 }
 
-static void processWindowInput(GLFWwindow* window) {
+void processWindowInput(GLFWwindow *const window) {
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
+}
+
+void setupGlBuffers(unsigned int& VAO, unsigned int& VBO, unsigned int& EBO) {
+	const float vertices[] = {
+		-.5f, -.5f, .0f,
+		-.5f, .5f, .0f,
+		.5f, -.5f, .0f,
+		.5f, .5f, .0f,
+	};
+
+	const unsigned int indices[] = {
+		0, 1, 2,
+		1, 2, 3,
+	};
+
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &VBO);
+	glGenBuffers(1, &EBO);
+
+	glBindVertexArray(VAO);
+
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0);
+
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+}
+
+const unsigned int compileShader(const GLenum shaderType, const char* shaderPath) {
+	ifstream shaderFile(shaderPath);
+	stringstream shaderStream;
+
+	if (!shaderFile.is_open()) {
+		cerr << "Failed to open shader file at path: " << shaderPath << endl;
+		return 0;
+	}
+
+	shaderStream << shaderFile.rdbuf();
+	shaderFile.close();
+
+	const string shaderCodeStr = shaderStream.str();
+	const char* shaderCode = shaderCodeStr.c_str();
+
+	const unsigned int shader = glCreateShader(shaderType);
+	glShaderSource(shader, 1, &shaderCode, nullptr);
+	glCompileShader(shader);
+
+	int success;
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+	if (!success) {
+		const size_t infoLogSize = 512;
+		char infoLog[infoLogSize];
+		glGetShaderInfoLog(shader, infoLogSize, nullptr, infoLog);
+
+		cerr << "Error compiling " << (shaderType == GL_VERTEX_SHADER ? "vertex" : "fragment") << " shader:\n" << infoLog << endl;
+	}
+	
+	return shader;
+}
+
+const unsigned int createShaderProgram(const char* vertexShaderPath, const char* fragmentShaderPath) {
+	const unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, vertexShaderPath);
+	const unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentShaderPath);
+	const unsigned int shaderProgram = glCreateProgram();
+
+	glAttachShader(shaderProgram, vertexShader);
+	glAttachShader(shaderProgram, fragmentShader);
+	glLinkProgram(shaderProgram);
+
+	glValidateProgram(shaderProgram);
+
+	int success;
+	glGetProgramiv(shaderProgram, GL_VALIDATE_STATUS, &success);
+	if (!success) {
+		const size_t infoLogSize = 512;
+		char infoLog[infoLogSize];
+		glGetProgramInfoLog(shaderProgram, infoLogSize, nullptr, infoLog);
+
+		cerr << "Error creating the shader program:\n" << infoLog << endl;
+	}
+
+	glDeleteShader(vertexShader);
+	glDeleteShader(fragmentShader);
+
+	return shaderProgram;
+}
+
+void teardownGlBuffers(const unsigned int& VAO, const unsigned int& VBO, const unsigned int& EBO) {
+	glDeleteVertexArrays(1, &VAO);
+	glDeleteBuffers(1, &VBO);
+	glDeleteBuffers(1, &EBO);
 }
 
 int main(void) {
@@ -82,16 +186,31 @@ int main(void) {
 
 	glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
 
+	const unsigned int shaderProgram = createShaderProgram("basic.vert", "basic.frag");
+
+	unsigned int VAO, VBO, EBO;
+	setupGlBuffers(VAO, VBO, EBO);
+
 	while (!glfwWindowShouldClose(window)) {
 		processWindowInput(window);
 
-		glClearColor(.0f, 1.f, .0f, 1.f);
+		glClearColor(.54f, .81f, .0f, 1.f);
 		glClear(GL_COLOR_BUFFER_BIT);
+
+		glUseProgram(shaderProgram);
+		glBindVertexArray(VAO);
+
+		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+		glBindVertexArray(0);
+		glUseProgram(0);
 
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
 
+	teardownGlBuffers(VAO, VBO, EBO);
+	glDeleteProgram(shaderProgram);
 	glfwTerminate();
 
 	return 0;
